@@ -23,7 +23,34 @@ type ExampleReply struct {
 }
 
 // Add your RPC definitions here.
+type phase int
 
+const (
+	// 0:map 1:reduce 2: done  reduce should be waiting util all map done
+	MapPhase    phase = 0
+	ReducePhase phase = 1
+	DonePhase   phase = 2
+
+	MapJob     int = 0
+	ReduceJob  int = 1
+	WaitingJob int = 2 //when map haven't been completed or all reduce job are assigned
+	ExitJob    int = 3
+)
+
+type TaskArgs struct {
+	WorkId int
+}
+
+type TaskReply struct {
+	Task *Task
+}
+
+type RegisterArgs struct {
+}
+
+type RegisterReply struct {
+	WorkerId int
+}
 
 // Cook up a unique-ish UNIX-domain socket name
 // in /var/tmp, for the coordinator.

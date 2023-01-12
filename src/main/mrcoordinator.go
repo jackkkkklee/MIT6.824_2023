@@ -1,18 +1,11 @@
 package main
 
-//
-// start the coordinator process, which is implemented
-// in ../mr/coordinator.go
-//
-// go run mrcoordinator.go pg*.txt
-//
-// Please do not change this file.
-//
-
-import "6.824/mr"
-import "time"
-import "os"
-import "fmt"
+import (
+	"6.824/mr"
+	"fmt"
+	"os"
+	"time"
+)
 
 func main() {
 	if len(os.Args) < 2 {

@@ -1,10 +1,16 @@
 package mr
 
-import "fmt"
+import (
+	"encoding/json"
+	"fmt"
+	"io/ioutil"
+	"os"
+	"sort"
+	"time"
+)
 import "log"
 import "net/rpc"
 import "hash/fnv"
-
 
 //
 // Map functions return a slice of KeyValue.
@@ -13,6 +19,19 @@ type KeyValue struct {
 	Key   string
 	Value string
 }
+type WorkerStruct struct {
+	WorkerId int
+	Mapf     func(string, string) []KeyValue
+	Reducef  func(string, []string) string
+}
+
+// for sorting by key.
+type ByKey []KeyValue
+
+// for sorting by key.
+func (a ByKey) Len() int           { return len(a) }
+func (a ByKey) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
+func (a ByKey) Less(i, j int) bool { return a[i].Key < a[j].Key }
 
 //
 // use ihash(key) % NReduce to choose the reduce
@@ -24,7 +43,6 @@ func ihash(key string) int {
 	return int(h.Sum32() & 0x7fffffff)
 }
 
-
 //
 // main/mrworker.go calls this function.
 //
@@ -32,9 +50,34 @@ func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
 
 	// Your worker implementation here.
-
+	w := WorkerStruct{
+		Mapf:    mapf,
+		Reducef: reducef,
+	}
 	// uncomment to send the Example RPC to the coordinator.
 	// CallExample()
+	w.Register()
+	for {
+		task := w.GetTask()
+		fmt.Printf("task: %v\n", task)
+		switch task.JobType {
+		case MapJob:
+			w.DoMap(task)
+			break
+		case ReduceJob:
+			w.DoReduce(task)
+			break
+		case WaitingJob:
+			fmt.Printf("worker Id: %v\n is sleeping", w.WorkerId)
+			time.Sleep(time.Second)
+			break
+		case ExitJob:
+			return
+		default:
+			fmt.Printf("ilegal job type\n")
+
+		}
+	}
 
 }
 
@@ -88,4 +131,75 @@ func call(rpcname string, args interface{}, reply interface{}) bool {
 
 	fmt.Println(err)
 	return false
+}
+
+// GetTask get task from master by rpc
+func (w *WorkerStruct) GetTask() *Task {
+	args := TaskArgs{}
+	reply := TaskReply{}
+	ok := call("Coordinator.AssignTask", &args, &reply)
+	fmt.Printf("reply %v \n", reply)
+	if ok {
+		return reply.Task
+	} else {
+		fmt.Printf("call failed!\n")
+		return nil
+	}
+}
+
+func (w *WorkerStruct) Register() {
+	args := RegisterArgs{}
+	reply := RegisterReply{}
+	ok := call("Coordinator.RegisterWorker", &args, &reply)
+	if ok {
+		w.WorkerId = reply.WorkerId
+	} else {
+		fmt.Printf("call failed!\n")
+	}
+}
+
+func (w *WorkerStruct) DoMap(task *Task) {
+	//reduceId := ihash(key) % NReduce
+	fmt.Printf("DoMap %v", *task)
+
+	//code from mrseq
+	intermediate := []KeyValue{}
+	for _, filename := range task.Input {
+		file, err := os.Open(filename)
+		if err != nil {
+			log.Fatalf("cannot open %v", filename)
+		}
+		content, err := ioutil.ReadAll(file)
+		if err != nil {
+			log.Fatalf("cannot read %v", filename)
+		}
+		file.Close()
+		kva := w.Mapf(filename, string(content))
+		intermediate = append(intermediate, kva...)
+	}
+	//hash intermediate to n temp reduce file
+	sort.Sort(ByKey(intermediate))
+	kvFile := make([][]KeyValue, task.NumReduce)
+	for _, v := range intermediate {
+		index := ihash(v.Key) % task.NumReduce
+		kvFile[index] = append(kvFile[index], v)
+	}
+	//output to local disk
+	for i, v := range kvFile {
+		oname := Naming(task.TaskId, i)
+		f, _ := os.Create(oname)
+		enc := json.NewEncoder(f)
+		for _, kv := range v {
+			enc.Encode(&kv)
+		}
+	}
+
+}
+
+func (w *WorkerStruct) DoReduce(task *Task) {
+	fmt.Printf("DoReduce %v", task)
+}
+
+func Naming(mapId int, reduceId int) string {
+	return fmt.Sprintf("sm-%d-%d", mapId, reduceId)
 }
