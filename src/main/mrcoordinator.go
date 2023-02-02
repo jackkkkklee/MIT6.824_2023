@@ -17,6 +17,6 @@ func main() {
 	for m.Done() == false {
 		time.Sleep(time.Second)
 	}
-
+	fmt.Printf("exit after 1 second!")
 	time.Sleep(time.Second)
 }

@@ -37,6 +37,13 @@ const (
 	ExitJob    int = 3
 )
 
+type NotifyTaskDoneArgs struct {
+	Jobholder *JobHolder
+}
+
+type NotifyTaskDoneReply struct {
+}
+
 type TaskArgs struct {
 	WorkId int
 }

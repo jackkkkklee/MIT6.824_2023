@@ -59,7 +59,7 @@ func Worker(mapf func(string, string) []KeyValue,
 	w.Register()
 	for {
 		task := w.GetTask()
-		fmt.Printf("task: %v\n", task)
+		fmt.Printf("assigned task: %v\n", task)
 		switch task.JobType {
 		case MapJob:
 			w.DoMap(task)
@@ -68,7 +68,7 @@ func Worker(mapf func(string, string) []KeyValue,
 			w.DoReduce(task)
 			break
 		case WaitingJob:
-			fmt.Printf("worker Id: %v\n is sleeping", w.WorkerId)
+			fmt.Printf("worker Id: %v  is sleeping\n", w.WorkerId)
 			time.Sleep(time.Second)
 			break
 		case ExitJob:
@@ -138,7 +138,7 @@ func (w *WorkerStruct) GetTask() *Task {
 	args := TaskArgs{}
 	reply := TaskReply{}
 	ok := call("Coordinator.AssignTask", &args, &reply)
-	fmt.Printf("reply %v \n", reply)
+	fmt.Printf("reply %v \n", reply.Task)
 	if ok {
 		return reply.Task
 	} else {
@@ -178,7 +178,7 @@ func (w *WorkerStruct) DoMap(task *Task) {
 		intermediate = append(intermediate, kva...)
 	}
 	//hash intermediate to n temp reduce file
-	sort.Sort(ByKey(intermediate))
+	//sort.Sort(ByKey(intermediate))
 	kvFile := make([][]KeyValue, task.NumReduce)
 	for _, v := range intermediate {
 		index := ihash(v.Key) % task.NumReduce
@@ -186,7 +186,7 @@ func (w *WorkerStruct) DoMap(task *Task) {
 	}
 	//output to local disk
 	for i, v := range kvFile {
-		oname := Naming(task.TaskId, i)
+		oname := NamingTempFile(task.TaskId, i)
 		f, _ := os.Create(oname)
 		enc := json.NewEncoder(f)
 		for _, kv := range v {
@@ -194,12 +194,78 @@ func (w *WorkerStruct) DoMap(task *Task) {
 		}
 	}
 
+	w.NotifyTaskDone(task)
+
 }
 
 func (w *WorkerStruct) DoReduce(task *Task) {
 	fmt.Printf("DoReduce %v", task)
+	files := task.Input
+	kva := make([]KeyValue, 0)
+	//read all related reduce temp file
+	for _, fileName := range files {
+		file, _ := os.Open(fileName)
+		dec := json.NewDecoder(file)
+		for {
+			var kv KeyValue
+			if err := dec.Decode(&kv); err != nil {
+				break
+			}
+			kva = append(kva, kv)
+		}
+		file.Close()
+	}
+
+	oname := NamingOutputFile(task.TaskId)
+	//fmt.Printf("create output file %v\n", oname)
+	ofile, _ := os.Create(oname)
+	sort.Sort(ByKey(kva))
+	//
+	// call Reduce on each distinct key in intermediate[],
+	// and print the result to mr-out-0.
+	//
+	i := 0
+	for i < len(kva) {
+		j := i + 1
+		for j < len(kva) && kva[j].Key == kva[i].Key {
+			j++
+		}
+		values := []string{}
+		for k := i; k < j; k++ {
+			values = append(values, kva[k].Value)
+		}
+		output := w.Reducef(kva[i].Key, values)
+
+		// this is the correct format for each line of Reduce output.
+		fmt.Fprintf(ofile, "%v %v\n", kva[i].Key, output)
+
+		i = j
+	}
+	ofile.Close()
+	w.NotifyTaskDone(task)
 }
 
-func Naming(mapId int, reduceId int) string {
-	return fmt.Sprintf("sm-%d-%d", mapId, reduceId)
+func (w *WorkerStruct) NotifyTaskDone(task *Task) {
+	args := NotifyTaskDoneArgs{
+		Jobholder: &JobHolder{
+			Task:        task,
+			JobWorkerId: w.WorkerId,
+		},
+	}
+	reply := NotifyTaskDoneReply{}
+	ok := call("Coordinator.NotifyTaskDone", &args, &reply)
+	if ok {
+
+	} else {
+		fmt.Printf("call failed!\n")
+	}
+}
+
+// NamingTempFile mr-x-y ;x is the number of map(default 8 based on *.txt),y is the number of reduce (default 10)
+func NamingTempFile(mapId int, reduceId int) string {
+	return fmt.Sprintf("mr-%d-%d", mapId, reduceId)
+}
+
+func NamingOutputFile(reduceId int) string {
+	return fmt.Sprintf("mr-out-%d", reduceId)
 }
